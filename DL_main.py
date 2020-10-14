@@ -6,6 +6,10 @@ Created on Thu Aug 13 15:11:16 2020.
 """
 import shutil
 import os
+from typing import Dict, Any, List
+
+from pandas import DataFrame
+
 import dl_functions as dlf
 import pandas as pd
 import numpy as np
@@ -128,7 +132,7 @@ def main(params: dict):
     assert ltype == 'sym', 'Поддерживается только симметричный вариант посадки'
 
     # Словарь со списками таблиц, содержащих результаты расчета нагрузок
-    res_gear = {}
+    res_gear: Dict[Any, Any] = {}
 
     # Формирование блока данных с результатами для шасси и мультииндексом
     # Фильтр массива исходных данных по агрегату landing_gear
@@ -176,6 +180,22 @@ def main(params: dict):
     else:  # Хз сколько основных опор шасси
         raise AssertionError('Неподдерживаемое количество опор')
 
+    # Домножение таблиц на коэффициент безопасности
+    for key in res_gear:
+        for i in range(len(res_gear[key])):
+            for gear in res_gear[key][i].columns.levels[0]:
+                for column_name in res_gear[key][i][gear].columns:
+                    if 'P' in column_name:
+                        # res_gear[key][i].loc[:,gear].loc[:,column_name] = res_gear[key][i].loc[:,gear].loc[:,column_name].mul(
+                        #     df_init['safety_factor'].loc[
+                        #         res_gear[key][i].index], axis=0)
+                        res_gear[key][i][gear][column_name].mul(
+                            df_init['safety_factor'].loc[
+                                res_gear[key][i].index], axis=0)
+# TODO: не присвиваются значения (результат умножения) в таблицу.
+#    Необходимо это исправить.
+            # res_gear[key][i] = res_gear[key][i].mul(df_init['safety_factor'].loc[res_gear[key][i].index], axis = 0)
+
     my_time('Calculate MG loads')  # Время выполнения программы
     # %%% Перевод в СК для отчета, Добавление левой части таблицы
 
@@ -200,73 +220,94 @@ def main(params: dict):
     # %% Вывод результатов
 
     # Создание дирректории для результатов
-    results_path = create_results_dir(workdir_path)
+    # results_path = create_results_dir(workdir_path)
     my_time('Rewrite RES Dir')  # Время выполнения программы
     # %%% создание графиков
 
-    plot_diagrams(all_dv_data,
-                  all_fg_data,
-                  all_mg_data,
-                  res_dv,
-                  res_gear,
-                  res_ovlds,
-                  results_path)
+    # plot_diagrams(all_dv_data, all_fg_data, all_mg_data,
+    #               res_dv, res_gear, res_ovlds,
+    #               results_path)
 
     my_time('Plot Diagrams')  # Время выполнения программы
     # raise SystemExit#!!!
     # %%% вывод в excel
-    # f_name = 'RES__/Dl_results.xlsx'
-    #
-    # wr = pd.ExcelWriter(f_name, engine='xlsxwriter')
-    #
-    # dlf.to_excel_list(wr, res_gear['FG'], 'FG')  # Нагрузки на ПОШ
-    # dlf.to_excel_list(wr, res_gear['MG_max'], 'MG_max')  # Нагрузки на ООШ
-    # dlf.to_excel_list(wr, res_gear['MG_comb'], 'MG_comb')  # Комбинации ООШ
-    # dlf.to_excel_list(
-    #     wr,
-    #     res_gear['MG_cross_comb'],
-    #     'MG_crosscomb')  # Совместные комбинации ООШ
-    #
-    # dlf.to_excel_list(wr, [res_dv[key] for key in [*res_dv]],
-    #                   'n_dv')  # Перегрузки по двигателю
-    #
-    # dlf.to_excel_list(
-    #     wr, [
-    #         res_ovlds[key] for key in [
-    #             *res_ovlds] if 'fuz' in key],
-    #     'n_fuz')  # Перегрузки по фюзеляжу
-    # dlf.to_excel_list(
-    #     wr, [
-    #         res_ovlds[key] for key in [
-    #             *res_ovlds] if 'go' in key], 'n_go')  # Перегрузки по ГО
-    # dlf.to_excel_list(
-    #     wr, [
-    #         res_ovlds[key] for key in [
-    #             *res_ovlds] if 'kr' in key], 'n_kr')  # Перегрузки по крылу
-    #
-    # wr.save()
-    #
-    # my_time('Write to EXCEL')  # Время выполнения программы
+    # write_results_to_excel(res_gear, res_dv, res_ovlds,
+    #                        results_path / 'Dl_results.xlsx')
+
+    my_time('Write to EXCEL')  # Время выполнения программы
 
     return my_time('END')  # Время выполнения программы
 
 
-def plot_diagrams(all_dv_data: [[pd.DataFrame]],
-                  all_fg_data: list,
-                  all_mg_data: [[pd.DataFrame]],
-                  res_dv: object,
-                  res_gear: object,
-                  res_ovlds: object,
-                  results_path: object) -> object:
+def write_results_to_excel(results_gears: Dict[Any, Any],
+                           results_engine: Dict[Any, DataFrame],
+                           results_overloads: Dict[str, DataFrame],
+                           file_name: pathlib.Path) -> None:
+    """
+    Запись Таблиц с результатами в файл excel.
+    Parameters
+    ----------
+    results_gears: Таблицы с результатами для опор шасси.
+    results_engine: Таблицы с результатами для СУ.
+    results_overloads: Таблицы с результатами для перегрузок по агрегатам.
+    file_name: Полное имя файла, в который будет производиться запись.
+    """
+    wr = pd.ExcelWriter(file_name, engine='xlsxwriter')
+    # Нагрузки на ПОШ
+    dlf.to_excel_list(wr, results_gears['FG'], 'FG')
+    # Нагрузки на ООШ
+    dlf.to_excel_list(wr, results_gears['MG_max'], 'MG_max')
+    # Комбинации ООШ
+    dlf.to_excel_list(wr, results_gears['MG_comb'], 'MG_comb')
+    # Совместные комбинации ООШ
+    dlf.to_excel_list(wr, results_gears['MG_cross_comb'], 'MG_crosscomb')
+    # Перегрузки по двигателю
+    dlf.to_excel_list(wr, [results_engine[key]
+                           for key in [*results_engine]], 'n_dv')
+    # Перегрузки по фюзеляжу
+    dlf.to_excel_list(wr, [results_overloads[key]
+                           for key in [*results_overloads]
+                           if 'fuz' in key], 'n_fuz')
+    # Перегрузки по ГО
+    dlf.to_excel_list(wr, [results_overloads[key]
+                           for key in [*results_overloads]
+                           if 'go' in key], 'n_go')
+    # Перегрузки по крылу
+    dlf.to_excel_list(wr, [results_overloads[key]
+                           for key in [*results_overloads]
+                           if 'kr' in key], 'n_kr')
+    wr.save()
+
+
+def plot_diagrams(all_engine_data: [[pd.DataFrame]],
+                  all_front_gear_data: List[Any],
+                  all_main_gear_data: [[pd.DataFrame]],
+                  results_engine: Dict[Any, DataFrame],
+                  results_gears: dict,
+                  results_overloads: Dict[str, pd.DataFrame],
+                  results_path: pathlib.Path) -> None:
+    """
+    Построение и отрисовка диаграмм (графиков) для полученных результатов.
+
+    Parameters
+    ----------
+    all_engine_data: результаты Адамс по всем случаям для двигателей
+    all_front_gear_data: результаты Адамс по всем случаям для ПОШ
+    all_main_gear_data: результаты Адамс по всем случаям для ООШ
+    results_engine: Таблицы обработанных результатов для СУ
+    results_gears: Таблицы обработанных результатов для опор шасси
+    results_overloads: Таблицы обработанных результатов для перегрузок
+    results_path: Путь к папке с результатами.
+    """
     # Диаграммы перегрузок двигателей
-    dlf.plot_dv_overloads(all_dv_data,
-                          res_dv,
+    dlf.plot_dv_overloads(all_engine_data,
+                          results_engine,
                           results_path / 'dv_overloads')
     # Диаграммы для перегрузок
-    dlf.plot_overloads(res_ovlds, results_path / 'Overloads', 8)
+    dlf.plot_overloads(results_overloads, results_path / 'Overloads', 8)
     # Графики ООШ и ПОШ
-    dlf.plot_mg_loads(all_mg_data, res_gear, results_path / 'MG_loads')
-    dlf.plot_fg_loads(all_fg_data, res_gear, results_path / 'FG_loads')
+    dlf.plot_mg_loads(all_main_gear_data, results_gears, results_path / 'MG_loads')
+    dlf.plot_fg_loads(all_front_gear_data, results_gears, results_path / 'FG_loads')
     plt.close('all')  # Удаление всех созданных фигур
 
 

@@ -5,7 +5,7 @@ Created on Wed Aug 19 14:15:49 2020
 @author: ulyanovas
 """
 import pathlib
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import AutoMinorLocator
@@ -1109,7 +1109,10 @@ def comb_sum_gear_loads(
 # %%% Нагрузки на шасси
 
 
-def calc_fg_loads(gear_data: pd.DataFrame, df_init: pd.DataFrame, res: dict):
+def calc_fg_loads(gear_data: pd.DataFrame,
+                  df_init: pd.DataFrame,
+                  res: Dict[Any, Any]) -> List[Any]:
+
     # Формирование таблиц
     c_tmp = pd.MultiIndex.from_tuples([('FG', 'Px_max'),
                                        ('FG', 'Px_min'),
@@ -1157,7 +1160,7 @@ def calc_fg_loads(gear_data: pd.DataFrame, df_init: pd.DataFrame, res: dict):
             df_init[df_init['type'].isin(['all', 'fg'])].index)]
 
     # Формирование списка с таблицами для графиков
-    all_fg_data_clear = []
+    all_fg_data_clear: List[Any] = []
     for index in res['FG'][0].index.tolist():
         all_fg_data_clear.append(all_fg_data[index])
 
@@ -1468,7 +1471,7 @@ def overload_distr(
                     all_data[i].max(
                         axis=0) *
                     init_table['safety_factor'].loc[i]).values
-        elif par == 'min':  # Ищем минимумыс домножением на коэф. безопасности
+        elif par == 'min':  # Ищем минимумы с домножением на коэф. безопасности
             for i in range(len(all_data)):
                 df_rez.loc[i] = (
                     all_data[i].min(
@@ -1741,7 +1744,7 @@ def comb_dv(df_data: pd.DataFrame, pmax=True):
 
 
 def calc_dv_overloads(adams_dv_data: [pd.DataFrame],
-                      init_table: pd.DataFrame) -> Dict[pd.DataFrame]:
+                      init_table: pd.DataFrame) -> Dict[Any, DataFrame]:
     """
     Основная функция вычисляющая комбинации по двигателям.
 
@@ -1762,7 +1765,7 @@ def calc_dv_overloads(adams_dv_data: [pd.DataFrame],
     dv_col = ['1_nx_max', '1_ny', '1_nz', '2_nx', '2_ny_max',
               '2_nz', '3_nx', '3_ny', '3_ny_max']  # Колонки таблицы
 
-    res_dv: Dict[pd.DataFrame] = {}  # Словарь для результатов
+    res_dv: Dict[Any, DataFrame]= {}  # Словарь для результатов
     # Используемые колонки
     col_used_0 = adams_dv_data[0].columns.remove_unused_levels()
     # Цикл по используемым инменам колонок на 0 уровне
