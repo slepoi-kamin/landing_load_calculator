@@ -5,7 +5,7 @@ Created on Wed Aug 19 14:15:49 2020
 @author: ulyanovas
 """
 import pathlib
-from typing import Dict, Any, List
+from typing import Dict, Any, List, NoReturn, AnyStr
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import AutoMinorLocator
@@ -2458,3 +2458,53 @@ def dialog_open_file() -> str:
     root.destroy()
 
     return file_path
+
+
+def find_df_columns(df: DataFrame,
+                    search_string: AnyStr,
+                    level: Any = 'max') -> List[Any]:
+    """
+    Возвращает список кортежей (путь для срезки колонок) для колонок,
+    в названии которых на выбранном уровне содержится искомая стока.
+    Если уровень не выбран, то поиск производится по максимальному (самому
+    нижнему) уровню.
+
+    Parameters
+    ----------
+    df: Таблица пандас
+    search_string: искомая строка
+    level: уровень поиска - целое число или строка.
+
+    Returns
+    -------
+    Список кортежей с путями для среза по колонкам.
+    """
+    # Максимально возможный уровень в именах колонок
+    max_level = len(df.columns.values[0])-1
+    # Уровень поиска.
+    level = max_level if (level == 'max' or level > max_level) else level
+    return [tpl
+            for tpl in df.columns.values
+            if search_string in tpl[level]]
+
+
+def df_column_multiply(df: DataFrame,
+                       search_string: AnyStr,
+                       multiplier: Any,
+                       level: Any = 'max') -> NoReturn:
+    """
+    Домножает столбцы таблицы пандас, в названии которых на заданном
+    уровне содержится искомая строка, на множитель используя метод .mul().
+    При Этом изменяется исходная таблица!
+    Parameters
+    ----------
+    df: таблица пандас.
+    search_string: искомая строка.
+    multiplier: множитель - что угодно (число, массив, таблица ...).
+    level: уровень поиска.
+    """
+    # Определение колонок, значения которых необходимо домножить
+    columns_to_multiply = find_df_columns(df, search_string, level)
+    # Домножение:
+    for column_path in columns_to_multiply:
+        df.loc[:, column_path] = df.loc[:, column_path].mul(multiplier)

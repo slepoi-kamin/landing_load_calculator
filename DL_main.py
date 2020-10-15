@@ -5,17 +5,14 @@ Created on Thu Aug 13 15:11:16 2020.
 @author: ulyanovas
 """
 import shutil
-import os
 from typing import Dict, Any, List
 
 from pandas import DataFrame
 
 import dl_functions as dlf
 import pandas as pd
-import numpy as np
 import pathlib
 import matplotlib.pyplot as plt
-
 
 def main(params: dict):
     # %% Исходные данные
@@ -183,18 +180,11 @@ def main(params: dict):
     # Домножение таблиц на коэффициент безопасности
     for key in res_gear:
         for i in range(len(res_gear[key])):
-            for gear in res_gear[key][i].columns.levels[0]:
-                for column_name in res_gear[key][i][gear].columns:
-                    if 'P' in column_name:
-                        # res_gear[key][i].loc[:,gear].loc[:,column_name] = res_gear[key][i].loc[:,gear].loc[:,column_name].mul(
-                        #     df_init['safety_factor'].loc[
-                        #         res_gear[key][i].index], axis=0)
-                        res_gear[key][i][gear][column_name].mul(
-                            df_init['safety_factor'].loc[
-                                res_gear[key][i].index], axis=0)
-# TODO: не присвиваются значения (результат умножения) в таблицу.
-#    Необходимо это исправить.
-            # res_gear[key][i] = res_gear[key][i].mul(df_init['safety_factor'].loc[res_gear[key][i].index], axis = 0)
+            # Множитель:
+            multiplier_slice = df_init['safety_factor'].loc[
+                res_gear[key][i].index]
+            # Умножение:
+            dlf.df_column_multiply(res_gear[key][i], 'P', multiplier_slice)
 
     my_time('Calculate MG loads')  # Время выполнения программы
     # %%% Перевод в СК для отчета, Добавление левой части таблицы
