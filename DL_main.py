@@ -5,10 +5,11 @@ Created on Thu Aug 13 15:11:16 2020.
 @author: ulyanovas
 """
 import shutil
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union, Tuple, NoReturn
 
-from pandas import DataFrame
+from pandas import DataFrame, Series
 
+import my_decorators as mdec
 import dl_functions as dlf
 import pandas as pd
 import pathlib
@@ -26,7 +27,6 @@ def main(params: dict):
     assert landing_type == 'sym', 'Only symmetric landing supported'
 
     # %% Считывание файлов исходных данных и перевод в СИ
-    my_time = dlf.get_time()
 
     with open(init_data_file_name, 'r') as tfile:
         text = tfile.read()
@@ -48,8 +48,6 @@ def main(params: dict):
     lst_left = dlf.list_from_text(text, '[LEFT_OUTPUT_TABLE]')
     # Таблица в итоговой системе единиц измерения
     df_left = dlf.units_from_SI(df_init[lst_left[1]], lst_left[0])
-
-    my_time('Read init files')  # Время выполнения программы
 
     # Формирование списка с таблицами обработанных (отфильтрованных) результатов
     all_adams_res = []  # Пустой список с таблицами обработанных результатов
@@ -79,7 +77,6 @@ def main(params: dict):
 
         all_adams_res.append(df_adams_res_SI)  # Наполнение списка
 
-    my_time('Read and butfilt files')  # Время выполнения программы
     # %% Таблица с полным Мультииндексом
 
     df_init_ad = df_init_ad[
@@ -94,25 +91,11 @@ def main(params: dict):
         associated_data.columns = df_col
         all_full_data.append(associated_data)
 
-    my_time('Full Multiindex Tables')  # Время выполнения программы
     # %% Перегрузки в двигателях
 
-    all_dv_data = []  # Список таблиц с данными по двигателям
-    for df_res in all_full_data:
-        dv_data = pd.concat([df_res.xs('dv_l', level='aggregate',
-                                       axis=1, drop_level=False),
-                             df_res.xs('dv_r', level='aggregate',
-                                       axis=1, drop_level=False)], axis=1)
-        dv_data.columns = dv_data.columns.droplevel(
-            ['me_name', 'units', 'me_loc_x', 'me_loc_y', 'type'])
-        dv_data = dv_data.reorder_levels(
-            ['aggregate', 'agr_number', 'component', 'me_loc_z'], axis=1)
-        all_dv_data.append(dv_data)
+    # noinspection PyTupleAssignmentBalance
+    all_dv_data, res_dv = engine_ovlds_calculation(all_full_data, df_init)
 
-    # Вычисление комбинаций по двигателям
-    res_dv = dlf.calc_dv_overloads(all_dv_data, df_init)
-
-    my_time('Calculate ENG overloads')  # Время выполнения программы
     # raise SystemExit
     # %%  Распределение перегрузок по фюзеляжу
 
@@ -122,15 +105,40 @@ def main(params: dict):
     # Расчет перегрузок для симметричного случая
     res_ovlds = dlf.calc_overloads(all_adams_res, df_init_ad, df_init)
 
-    my_time('Calculate FUZ and WNG overloads')  # Время выполнения программы
     # %% Нагрузки на шасси
 
+    # Расчет нагрузок на шасси
+    all_fg_data, all_mg_data, res_gear = gear_loads_calculation(
+        all_full_data, df_init)
+
+    # %%%
+
+    # Перевод в СК для отчета
+    convert_from_si(all_fg_data, all_mg_data, res_gear)
+    # Добавление левой части таблицы
+    add_left_to_tables(df_left, res_dv, res_gear)
+
+    # raise SystemExit
+    # %% Вывод результатов
+
+    # Создание дирректории для результатов
+    results_path = create_results_dir(workdir_path)
+    # %%% создание графиков
+
+    plot_diagrams(all_dv_data, all_fg_data, all_mg_data,
+                  res_dv, res_gear, res_ovlds,
+                  results_path)
+
+    # raise SystemExit#!!!
+    # %%% вывод в excel
+    write_results_to_excel(res_gear, res_dv, res_ovlds,
+                           results_path / 'Dl_results.xlsx')
+
+
+@mdec.logtime('Создание полной таблицы с нагрузками на шасси')
+def all_lg_data_cre(all_adams_res, df_init_ad, landing_type):
     ltype = landing_type
     assert ltype == 'sym', 'Поддерживается только симметричный вариант посадки'
-
-    # Словарь со списками таблиц, содержащих результаты расчета нагрузок
-    res_gear: Dict[Any, Any] = {}
-
     # Формирование блока данных с результатами для шасси и мультииндексом
     # Фильтр массива исходных данных по агрегату landing_gear
     df_lnd_gear_init = df_init_ad[
@@ -140,10 +148,8 @@ def main(params: dict):
         'me_name']]  # Удаление лишних столбцов
     # Формирование массива с индексами (мультииндекс)
     df_col_multiindex = pd.MultiIndex.from_frame(df_lnd_gear_init)
-
     # Пустой список с таблицами результатов по шасси и мультииндексом
     all_lndgear_data = []
-
     for df_res in all_adams_res:
         # Выборка столбцов с данными для шасси
         df_lndgear_data = df_res[df_lnd_gear_init['me_name']]
@@ -152,17 +158,135 @@ def main(params: dict):
         df_lndgear_data = df_lndgear_data.sort_index(
             axis=1)  # Сортировка по названию столбцов
         all_lndgear_data.append(df_lndgear_data)  # Наполнение списка
-    # !!! Пример: df_tmp1 = df_lndgear_data.xs('y', level = 'component',axis = 1)
+    return all_lndgear_data
 
-    my_time('Create Gears tables')  # Время выполнения программы
-    # %%% ПОШ
+
+@mdec.logtime('Добавление левой части к таблицам')
+def add_left_to_tables(df_left: DataFrame,
+                       res_dv: Dict[Any, DataFrame],
+                       res_gear: Dict[Any, Any]) -> NoReturn:
+    """
+    Добавление левой части (левой шапки) к таблицам с результатами.
+    Функция изменяет входящие в нее объекты.
+    Parameters
+    ----------
+    df_left: Таблица с левой частью.
+    res_dv: Словарь с результатами по СУ.
+    res_gear: Словарь с результатами по шасси.
+    """
+    for key in res_dv:
+        # Добавление левой части Таблицам
+        res_dv[key] = pd.concat([df_left, res_dv[key]], axis=1, join='inner')
+    for key in res_gear:  # Для всех ключей в словаре с результатами
+        lst = res_gear[key]  # Более короткая ссылка на список Таблиц
+        for i in range(len(lst)):
+            # Добавление левой части Таблицам
+            lst[i] = pd.concat([df_left, lst[i]], axis=1, join='inner')
+
+
+@mdec.logtime('Конвертация единиц измерения из СИ в рабочую')
+def convert_from_si(all_fg_data: List[Any],
+                    all_mg_data: List[Union[DataFrame, Any]],
+                    res_gear: Dict[Any, Any]) -> NoReturn:
+    """
+    Конвертация из СИ в расчетную систему единиц измерения.
+    Функция изменяет входящие объекты.
+    Parameters
+    ----------
+    all_fg_data: Список таблиц с переходными процессами ПОШ.
+    all_mg_data: Список таблиц с переходными процессами ООШ.
+    res_gear: Словарь с таблицами с результатами по нагрузкам на шасси.
+    """
+    dlf.gear_data_to_SI(all_mg_data)  # Перевод в СИ
+    dlf.gear_data_to_SI(all_fg_data)  # Перевод в СИ
+    for key in res_gear:  # Для всех ключей в словаре с результатами
+        lst = res_gear[key]  # Более короткая ссылка на список Таблиц
+        for i in range(len(lst)):  # Для всех таблиц в списке
+            # Список единиц измерения
+            units = dlf.units_from_names(
+                list(lst[i].columns.get_level_values(1)))
+            # Переход к эдиницам из списка
+            lst[i] = dlf.units_from_SI(lst[i], units)
+
+
+@mdec.logtime('Расчет перегрузок по агрегатам')
+def engine_ovlds_calculation(
+        all_full_data: List[Union[Union[Series, DataFrame, None], Any]],
+        df_init: DataFrame,
+        ) -> Tuple[List[Union[DataFrame, Series]], Dict[Any, DataFrame]]:
+    """
+    Расчет перегрузок в ц.т. СУ
+    Parameters
+    ----------
+    all_full_data: список Таблиц с полным мультииндексом, в которых
+    содержаться данные расчета Адамс (переходные процессы).
+    df_init: Таблица пандас, содержащая исходные данные.
+
+    Returns
+    -------
+    all_dv_data: Список таблиц, содержащих переходные процессы по СУ,
+    для дальнейшей их отрисовки.
+    res_dv: Словарь с таблицами результатов для двигателей.
+    """
+    all_dv_data = []  # Список таблиц с данными по двигателям
+    for df_res in all_full_data:
+        dv_data = pd.concat([df_res.xs('dv_l',
+                                       level='aggregate',
+                                       axis=1,
+                                       drop_level=False),
+                             df_res.xs('dv_r',
+                                       level='aggregate',
+                                       axis=1,
+                                       drop_level=False)],
+                            axis=1)
+        dv_data.columns = dv_data.columns.droplevel(
+            ['me_name', 'units', 'me_loc_x', 'me_loc_y', 'type'])
+        dv_data = dv_data.reorder_levels(
+            ['aggregate', 'agr_number', 'component', 'me_loc_z'], axis=1)
+        all_dv_data.append(dv_data)
+    # Вычисление комбинаций по двигателям
+    res_dv = dlf.calc_dv_overloads(all_dv_data, df_init)
+    return all_dv_data, res_dv
+
+
+@mdec.logtime('Расчет нагрузок на шасси')
+def gear_loads_calculation(
+        all_full_data: List[Union[Union[Series, None, DataFrame], Any]],
+        df_init: DataFrame
+        ) -> Tuple[List[Any], List[Union[DataFrame, Any]], Dict[Any, Any]]:
+    """
+    Расчет нагрузок на шасси.
+    Parameters
+    ----------
+    all_full_data: переходные процессы (данные Адамс) для всех
+    расчетных случаев.
+    df_init: Таблица пандас с исходными данными.
+
+    Returns
+    -------
+    all_fg_data: переходные процессы для передней опоры шасси
+    all_mg_data: переходные процессы для основных опор шасси
+    res_gear: Словарь с таблицами результатов по всем опорам шасси.
+    """
+    all_lndgear_data = []
+    for df_res in all_full_data:
+        lg_data = df_res.xs('landing_gear', level='aggregate',
+                            axis=1, drop_level=False)
+        lg_data.columns = lg_data.columns.droplevel(
+            ['units', 'me_loc_x', 'me_loc_y', 'me_loc_z', 'aggregate',])
+        lg_data = lg_data.reorder_levels(
+            ['type', 'agr_number', 'component', 'me_name'], axis=1)
+        all_lndgear_data.append(lg_data)
+
+    # Словарь со списками таблиц, содержащих результаты расчета нагрузок
+    res_gear = {}
 
     # Расчет нагрузок ПОШ
-    all_fg_data = dlf.calc_fg_loads(all_lndgear_data, df_init, res_gear)
+    all_fg_data = dlf.calc_fg_loads(all_lndgear_data,
+                                               df_init,
+                                               res_gear)
 
-    my_time('Calculate FG loads')  # Время выполнения программы
-    # %%% ООШ
-
+    # Расчет нагрузок ООШ
     if all_lndgear_data[0].columns.get_level_values(
             'agr_number').max() == 5:  # 4 основные опоры шасси
         all_mg_data = dlf.calc_mg_loads_4(
@@ -176,7 +300,6 @@ def main(params: dict):
 
     else:  # Хз сколько основных опор шасси
         raise AssertionError('Неподдерживаемое количество опор')
-
     # Домножение таблиц на коэффициент безопасности
     for key in res_gear:
         for i in range(len(res_gear[key])):
@@ -185,50 +308,10 @@ def main(params: dict):
                 res_gear[key][i].index]
             # Умножение:
             dlf.df_column_multiply(res_gear[key][i], 'P', multiplier_slice)
-
-    my_time('Calculate MG loads')  # Время выполнения программы
-    # %%% Перевод в СК для отчета, Добавление левой части таблицы
-
-    for key in res_dv:
-        # Добавление левой части Таблицам
-        res_dv[key] = pd.concat([df_left, res_dv[key]], axis=1, join='inner')
-
-    for key in res_gear:  # Для всех ключей в словаре с результатами
-        lst = res_gear[key]  # Более короткая ссылка на список Таблиц
-        # Для всех таблиц в списке переходим к отчетной системе единиц измерения
-        for i in range(len(lst)):
-            lst[i] = dlf.units_from_SI(lst[i], dlf.units_from_names
-            (list(lst[i].columns.get_level_values(1))))
-            # Добавление левой части Таблицам
-            lst[i] = pd.concat([df_left, lst[i]], axis=1, join='inner')
-
-    dlf.gear_data_to_SI(all_mg_data)  # Перевод в СИ
-    dlf.gear_data_to_SI(all_fg_data)  # Перевод в СИ
-
-    my_time('Transform Units')  # Время выполнения программы
-    # raise SystemExit
-    # %% Вывод результатов
-
-    # Создание дирректории для результатов
-    # results_path = create_results_dir(workdir_path)
-    my_time('Rewrite RES Dir')  # Время выполнения программы
-    # %%% создание графиков
-
-    # plot_diagrams(all_dv_data, all_fg_data, all_mg_data,
-    #               res_dv, res_gear, res_ovlds,
-    #               results_path)
-
-    my_time('Plot Diagrams')  # Время выполнения программы
-    # raise SystemExit#!!!
-    # %%% вывод в excel
-    # write_results_to_excel(res_gear, res_dv, res_ovlds,
-    #                        results_path / 'Dl_results.xlsx')
-
-    my_time('Write to EXCEL')  # Время выполнения программы
-
-    return my_time('END')  # Время выполнения программы
+    return all_fg_data, all_mg_data, res_gear
 
 
+@mdec.logtime('Запись результатов в Excel')
 def write_results_to_excel(results_gears: Dict[Any, Any],
                            results_engine: Dict[Any, DataFrame],
                            results_overloads: Dict[str, DataFrame],
@@ -269,6 +352,7 @@ def write_results_to_excel(results_gears: Dict[Any, Any],
     wr.save()
 
 
+@mdec.logtime('Создание диаграмм')
 def plot_diagrams(all_engine_data: [[pd.DataFrame]],
                   all_front_gear_data: List[Any],
                   all_main_gear_data: [[pd.DataFrame]],
@@ -285,7 +369,7 @@ def plot_diagrams(all_engine_data: [[pd.DataFrame]],
     all_front_gear_data: результаты Адамс по всем случаям для ПОШ
     all_main_gear_data: результаты Адамс по всем случаям для ООШ
     results_engine: Таблицы обработанных результатов для СУ
-    results_gears: Таблицы обработанных результатов для опор шасси
+    results_gears: Таблицы обработанных результа тов для опор шасси
     results_overloads: Таблицы обработанных результатов для перегрузок
     results_path: Путь к папке с результатами.
     """
@@ -296,11 +380,14 @@ def plot_diagrams(all_engine_data: [[pd.DataFrame]],
     # Диаграммы для перегрузок
     dlf.plot_overloads(results_overloads, results_path / 'Overloads', 8)
     # Графики ООШ и ПОШ
-    dlf.plot_mg_loads(all_main_gear_data, results_gears, results_path / 'MG_loads')
-    dlf.plot_fg_loads(all_front_gear_data, results_gears, results_path / 'FG_loads')
+    dlf.plot_mg_loads(all_main_gear_data, results_gears,
+                      results_path / 'MG_loads')
+    dlf.plot_fg_loads(all_front_gear_data, results_gears,
+                      results_path / 'FG_loads')
     plt.close('all')  # Удаление всех созданных фигур
 
 
+@mdec.logtime('Создание дирректории с результатами')
 def create_results_dir(workdir_path: pathlib.Path,
                        res_dir: str = '_RES_') -> pathlib.Path:
     """
@@ -334,4 +421,5 @@ if __name__ == '__main__':
         'design_case_end_number': 4,
     }
 
-    fin_time = main(params)
+    main(params)
+    fin_time = mdec.LogTime.get_time('norm')

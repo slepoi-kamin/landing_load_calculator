@@ -4,7 +4,9 @@ Created on Wed Aug 19 14:15:49 2020
 
 @author: ulyanovas
 """
+import math
 import pathlib
+from types import FunctionType
 from typing import Dict, Any, List, NoReturn, AnyStr
 
 import matplotlib.pyplot as plt
@@ -20,7 +22,6 @@ import os
 import time
 
 # %% Разные функции
-
 
 def get_time():
     start_time = time.time()
@@ -39,6 +40,7 @@ def get_time():
             percent_time[new_key] = time_fr_start[-1] / time_fr_start[-1]
         return percent_time
     return norm_time
+
 
 
 def df_from_text(text: str, start: str):
@@ -1109,9 +1111,7 @@ def comb_sum_gear_loads(
 # %%% Нагрузки на шасси
 
 
-def calc_fg_loads(gear_data: pd.DataFrame,
-                  df_init: pd.DataFrame,
-                  res: Dict[Any, Any]) -> List[Any]:
+def calc_fg_loads(gear_data, df_init, res) -> List[Any]:
 
     # Формирование таблиц
     c_tmp = pd.MultiIndex.from_tuples([('FG', 'Px_max'),
@@ -2459,6 +2459,7 @@ def dialog_open_file() -> str:
 
     return file_path
 
+# %% Не отсортированные функции
 
 def find_df_columns(df: DataFrame,
                     search_string: AnyStr,

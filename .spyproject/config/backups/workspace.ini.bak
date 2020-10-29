@@ -6,5 +6,5 @@ save_non_project_files = False
 
 [main]
 version = 0.2.0
-recent_files = ['DL.py', 'dl_functions.py', 'test_from_jupiter.py', 'test_to_excel.py']
+recent_files = ['dl_functions.py', 'uf_dl_main_0_1b.py', 'DL_main.py']
 
