@@ -43,7 +43,7 @@ def get_time():
 
 
 
-def df_from_text(text: str, start: str):
+def df_from_text(text: List[str], start: str):
 
     start_index = text.index(start)
     end_index = text.index('[END_TABLE]', start_index)

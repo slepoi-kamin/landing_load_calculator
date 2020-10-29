@@ -15,6 +15,7 @@ import pandas as pd
 import pathlib
 import matplotlib.pyplot as plt
 
+
 def main(params: dict):
     # %% Исходные данные
     init_data_file_name = params['dl_path']
@@ -24,17 +25,72 @@ def main(params: dict):
 
     workdir_path = pathlib.Path(init_data_file_name).parent.absolute()
 
+    # TODO: Добавить чекер файла исходных данных
+    # TODO: добавить переменные для первого и последнего случая,
+    #  которые требуется расчитать
+
     assert landing_type == 'sym', 'Only symmetric landing supported'
 
-    # %% Считывание файлов исходных данных и перевод в СИ
+    # %% Основное тело программы
+    # Чтение файла исходных данных
+    text = read_dl_file(init_data_file_name)
 
-    with open(init_data_file_name, 'r') as tfile:
-        text = tfile.read()
+    # Разбиение на блоки, перевод в таблицы Пандас
+    df_init, df_init_ad, df_left = parsing_init_data(text)
 
-    text = text.split('\n')
-    text = [x for x in text if x != '']
-    text = [x for x in text if x[0] != '#']
+    # TODO: Добавить программу, которая будет отфильтровывать таблицу
+    #  df_init от лишних случаев - то есть в итоговой таблице должны
+    #  содежаться только те случаи, которые требуются пользователю.
 
+    # Чтение файлов результатов, фильтрация данных
+    all_adams_res = get_adams_results(df_init,df_init_ad, lowcut, order,
+                                      workdir_path)
+
+    # Удаление TIME из таблицы. ~ - реверс isin
+    df_init_ad_nt = df_init_ad[~df_init_ad['type'].isin(['time'])]
+
+    # Таблицы данных с полным мультииндексом
+    all_full_data = create_full_data_table(all_adams_res, df_init_ad_nt)
+
+    # Расчет перегрузок в двигателях
+    # noinspection PyTupleAssignmentBalance
+    all_dv_data, res_dv = engine_ovlds_calculation(all_full_data, df_init)
+    # Расчет перегрузок по фюзеляжу для симметричного случая
+    res_ovlds = dlf.calc_overloads(all_adams_res, df_init_ad_nt, df_init)
+    # Расчет нагрузок на шасси
+    all_fg_data, all_mg_data, res_gear = gear_loads_calculation(
+        all_full_data, df_init)
+
+    # Перевод в СК для отчета
+    convert_from_si(all_fg_data, all_mg_data, res_gear)
+    # Добавление левой части таблицы
+    add_left_to_tables(df_left, res_dv, res_gear)
+
+    # Создание дирректории для результатов
+    results_path = create_results_dir(workdir_path)
+    # Создание графиков
+    plot_diagrams(all_dv_data, all_fg_data, all_mg_data,
+                  res_dv, res_gear, res_ovlds,
+                  results_path)
+    # Вывод результатов в excel
+    write_results_to_excel(res_gear, res_dv, res_ovlds,
+                           results_path / 'Dl_results.xlsx')
+
+
+@mdec.logtime('Парсинг блоков из файла исходных данных')
+def parsing_init_data(text: List[str]) -> (DataFrame, DataFrame, DataFrame):
+    """
+    Разбор текста файла исходных данных на блоки по таблицам.
+    Parameters
+    ----------
+    text: построчный список с текстом файла исходных данных
+
+    Returns
+    -------
+    df_init: таблица исходных данных
+    df_init_ad: таблица асооциации
+    df_left: левая шапка
+    """
     # Считывание из текста таблицы исходных данных в Таблицу Пандас, перевод в СИ
     df_init = dlf.df_to_SI(dlf.df_from_text(text, '[INITIAL_DATA_TABLE]'))
     # Считывание из текста таблицы соответствия измерителей в Таблицу Пандас,
@@ -43,15 +99,59 @@ def main(params: dict):
     # Корректировка от точки названий измерителей
     df_init_ad['me_name'] = [dlf.check_content(
         x, '.', True) for x in df_init_ad['me_name']]
-    # Формирование левой части для ТАблиз с результатами
+    # Формирование левой части для ТАблиц с результатами
     # Список с колонками левой части
     lst_left = dlf.list_from_text(text, '[LEFT_OUTPUT_TABLE]')
     # Таблица в итоговой системе единиц измерения
     df_left = dlf.units_from_SI(df_init[lst_left[1]], lst_left[0])
+    return df_init, df_init_ad, df_left
 
-    # Формирование списка с таблицами обработанных (отфильтрованных) результатов
-    all_adams_res = []  # Пустой список с таблицами обработанных результатов
-    # df_init.index:
+
+@mdec.logtime('Чтение файла исходных данных')
+def read_dl_file(init_data_file_name: pathlib.Path) -> List[str] :
+    """
+    Чтение файла исходных данных
+    Parameters
+    ----------
+    init_data_file_name: полный путь к файлу исходных данных
+
+    Returns
+    -------
+
+    """
+    # noinspection PyTypeChecker
+    with open(init_data_file_name, 'r') as tfile:
+        text = tfile.read()
+    text = text.split('\n')
+    list_text = [x for x in text if x != '']
+    list_text: List[str] = [x for x in list_text if x[0] != '#']
+    return list_text
+
+
+@mdec.logtime('Импорт и фильтрация результатов Адамс')
+def get_adams_results(df_init: DataFrame,
+                      df_init_ad: DataFrame,
+                      lowcut: float,
+                      order: int,
+                      workdir_path: pathlib.Path) -> List[DataFrame]:
+    """
+    Импорт результатов Адамс. Фильтрация этих результатов фильтром баттерворта.
+        Перевод результатов в СИ.
+    Parameters
+    ----------
+    df_init: таблица исходных данных
+    df_init_ad: таблица ассоциации
+    lowcut: частота среза
+    order: порядок фильтра
+    workdir_path: путь к рабочей директории
+
+    Returns
+    -------
+    all_adams_res:
+    """
+    # Список с таблицами обработанных (отфильтрованных) результатов
+    all_adams_res: List[DataFrame] = []
+
     for i in range(df_init.index.start, 4, df_init.index.step):  # !!!
         # Импорт файла результатов Adams
         data_file_path = workdir_path / df_init['data_file_name'][i]
@@ -60,15 +160,18 @@ def main(params: dict):
         adams_res.columns = [
             dlf.check_content(
                 x, '.', True) for x in adams_res.columns]
-        # Фильтрация импортированного файла для соответсвия названия его столбцов
-        # именам измерителей в файле исходных данных
+
+        # Фильтрация импортированного файла для соответсвия названия его
+        # столбцов именам измерителей в файле исходных данных
         adams_res = dlf.ad_res_filter(df_init_ad['me_name'], adams_res)
+
         # Перевод в систему СИ
         data = adams_res.to_numpy()
         units = list(df_init_ad['units'])
         df_adams_res_SI = pd.DataFrame(
             dlf.units_to_SI(units, data),
             columns=adams_res.columns)  # Перевод в Pandas
+
         # фильтрация данных
         dlf.df_butfilt(df_adams_res_SI, order, lowcut, 2)
 
@@ -76,63 +179,33 @@ def main(params: dict):
         df_adams_res_SI = df_adams_res_SI.set_index(df_adams_res_SI.columns[0])
 
         all_adams_res.append(df_adams_res_SI)  # Наполнение списка
+    return all_adams_res
 
-    # %% Таблица с полным Мультииндексом
 
-    df_init_ad = df_init_ad[
-        ~df_init_ad['type'].isin(['time'])]  # Реверс изин ~
+@mdec.logtime('Объединение таблицы соответствия с таблицами результатов')
+def create_full_data_table(all_adams_res: List[Any],
+                           df_init_ad: DataFrame) -> List[Any]:
+    """
+    Формирование (создание) списка с таблицами с полным мультииндексом,
+        содержащими результаты Адамс.
+        Объединение таблицы соответствия и таблиц с результатами Адамс.
+    Parameters
+    ----------
+    all_adams_res: список с таблицами, содержащими результаты Адамс
+    df_init_ad: Таблица соответствия.
 
+    Returns
+    -------
+    all_full_data: Итоговый список.
+    """
     # Формирование массива с индексами (мультииндекс)
     df_col = pd.MultiIndex.from_frame(df_init_ad)
-
     all_full_data = []
     for df_res in all_adams_res:
         associated_data = df_res[df_init_ad['me_name']]
         associated_data.columns = df_col
         all_full_data.append(associated_data)
-
-    # %% Перегрузки в двигателях
-
-    # noinspection PyTupleAssignmentBalance
-    all_dv_data, res_dv = engine_ovlds_calculation(all_full_data, df_init)
-
-    # raise SystemExit
-    # %%  Распределение перегрузок по фюзеляжу
-
-    ltype = landing_type
-    assert ltype == 'sym', 'Поддерживается только симметричный вариант посадки'
-
-    # Расчет перегрузок для симметричного случая
-    res_ovlds = dlf.calc_overloads(all_adams_res, df_init_ad, df_init)
-
-    # %% Нагрузки на шасси
-
-    # Расчет нагрузок на шасси
-    all_fg_data, all_mg_data, res_gear = gear_loads_calculation(
-        all_full_data, df_init)
-
-    # %%%
-
-    # Перевод в СК для отчета
-    convert_from_si(all_fg_data, all_mg_data, res_gear)
-    # Добавление левой части таблицы
-    add_left_to_tables(df_left, res_dv, res_gear)
-
-    # raise SystemExit
-    # %% Вывод результатов
-
-    # Создание дирректории для результатов
-    results_path = create_results_dir(workdir_path)
-    # %%% создание графиков
-
-    plot_diagrams(all_dv_data, all_fg_data, all_mg_data,
-                  res_dv, res_gear, res_ovlds,
-                  results_path)
-
-    # raise SystemExit#!!!
-    # %%% вывод в excel
-    write_results_to_excel(res_gear, res_dv, res_ovlds,
-                           results_path / 'Dl_results.xlsx')
+    return all_full_data
 
 
 @mdec.logtime('Создание полной таблицы с нагрузками на шасси')
@@ -423,3 +496,4 @@ if __name__ == '__main__':
 
     main(params)
     fin_time = mdec.LogTime.get_time('norm')
+    # raise SystemExit
