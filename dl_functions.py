@@ -42,7 +42,6 @@ def get_time():
     return norm_time
 
 
-
 def df_from_text(text: List[str], start: str):
 
     start_index = text.index(start)
